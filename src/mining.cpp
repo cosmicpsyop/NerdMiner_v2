@@ -1210,7 +1210,11 @@ void runMonitor(void *name)
 
   unsigned long mLastCheck = 0;
 
+  #ifdef SCREEN_STARTUP_SELECT_ENABLE
+  resetToStartupScreen();
+  #else
   resetToFirstScreen();
+  #endif
 
   unsigned long frame = 0;
 

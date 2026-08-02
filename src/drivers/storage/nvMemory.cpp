@@ -37,6 +37,9 @@ bool nvMemory::saveConfig(TSettings* Settings)
         json[JSON_SPIFFS_KEY_STATS2NV] = Settings->saveStats;
         json[JSON_SPIFFS_KEY_INVCOLOR] = Settings->invertColors;
         json[JSON_SPIFFS_KEY_BRIGHTNESS] = Settings->Brightness;
+#ifdef SCREEN_STARTUP_SELECT_ENABLE
+        json[JSON_SPIFFS_KEY_STARTUPSCREEN] = Settings->StartupScreen;
+#endif
 
         // Open config file
         File configFile = SPIFFS.open(JSON_CONFIG_FILE, "w");
@@ -109,6 +112,13 @@ bool nvMemory::loadConfig(TSettings* Settings)
                     } else {
                         Settings->Brightness = 250;
                     }
+#ifdef SCREEN_STARTUP_SELECT_ENABLE
+                    if (json.containsKey(JSON_SPIFFS_KEY_STARTUPSCREEN)) {
+                        Settings->StartupScreen = json[JSON_SPIFFS_KEY_STARTUPSCREEN].as<int>();
+                    } else {
+                        Settings->StartupScreen = DEFAULT_STARTUP_SCREEN;
+                    }
+#endif
                     return true;
                 }
                 else

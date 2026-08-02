@@ -41,6 +41,7 @@ extern TouchHandler touchHandler;
 #endif
 
 extern monitor_data mMonitor;
+extern TSettings Settings;
 
 #ifdef SD_ID
   SDCard SDCrd = SDCard(SD_ID);
@@ -124,6 +125,11 @@ void setup()
 
   /******** INIT WIFI ************/
   init_WifiManager();
+
+  #ifdef SCREEN_STARTUP_SELECT_ENABLE
+  setStartupScreen(Settings.StartupScreen);
+  Serial.printf("[display] startup screen index=%d\n", getStartupScreen());
+  #endif
 
   /******** CREATE TASK TO PRINT SCREEN *****/
   //tft.pushImage(0, 0, MinerWidth, MinerHeight, MinerScreen);
