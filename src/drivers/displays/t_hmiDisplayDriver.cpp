@@ -101,7 +101,7 @@ uint32_t readAdcVoltage(int pin) {
 
     esp_adc_cal_value_t val_type = esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_chars);
     return esp_adc_cal_raw_to_voltage(analogRead(pin), &adc_chars);
-  }
+}
 
 void printBatteryVoltage() {
     uint32_t voltage = readAdcVoltage(BAT_ADC_PIN) * 2;
@@ -332,7 +332,6 @@ void t_hmiDisplay_GlobalHashScreen(unsigned long mElapsed)
   background.drawString(data.btcPrice.c_str(), 198, 3, GFXFF);
 
   // Print Hour
-
   background.setFreeFont(FSSB9);
   background.setTextSize(1);
   background.setTextDatum(TL_DATUM);
@@ -390,7 +389,7 @@ void t_hmiDisplay_BTCprice(unsigned long mElapsed)
   background.pushImage(0, 0, priceScreenWidth, 170 /*priceScreenHeight*/, priceScreen);
 
   Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
-  data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
+                data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   // Hashrate
   render.setFontSize(25);
@@ -405,6 +404,7 @@ void t_hmiDisplay_BTCprice(unsigned long mElapsed)
   render.setFontColor(TFT_BLACK);
 
   // Print Hour
+
   background.setFreeFont(FSSB9);
   background.setTextSize(1);
   background.setTextDatum(TL_DATUM);
