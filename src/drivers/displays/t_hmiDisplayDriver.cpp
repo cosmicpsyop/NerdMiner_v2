@@ -35,20 +35,53 @@ static void toggleBottomScreen() {
 static XPT2046 t_hmi_touch(SPI, ETOUCH_CS, TOUCH_IRQ);
 static unsigned long lastTouchTime = 0;
 
+// Volatile state for the Hardware Interrupt
+static volatile bool t_hmi_touch_detected = false;
+
+// The actual ISR (Interrupt Service Routine)
+// Must be as fast as possible, placed in IRAM
+void IRAM_ATTR t_hmi_touch_isr() {
+    t_hmi_touch_detected = true;
+}
+
 static void t_hmi_pollTouch() {
-  if (t_hmi_touch.pressed()) {
-    unsigned long currentTime = millis();
-    if (currentTime - lastTouchTime >= 2000) { // 2s debounce
-      lastTouchTime = currentTime;
-      uint16_t touch_x = t_hmi_touch.RawX();
-      if (touch_x < 200 + (1700 - 200) / 4) {
-        Serial.print("Touch bottom\\n");
-        toggleBottomScreen();
-        alternateScreenState(); 
-      } else {
-        Serial.print("Touch top\\n");
-        switchToNextScreen();
-      }
+  // Only process if the hardware interrupt caught a touch
+  if (t_hmi_touch_detected) {
+    t_hmi_touch_detected = false; // Reset the flag immediately
+
+    // Safety check: is it actually still pressed? (Filters out EMI noise on the IRQ line)
+    if (t_hmi_touch.pressed()) {
+        unsigned long currentTime = millis();
+
+        // Reduced debounce from 2000ms to 200ms for much snappier UI response
+        if (currentTime - lastTouchTime >= 200) {
+          lastTouchTime = currentTime;
+
+          uint16_t touch_x = t_hmi_touch.RawX();
+          uint16_t touch_y = t_hmi_touch.RawY();
+
+          if (touch_x < 200 + (1700 - 200) / 4) {
+            Serial.println("Touch: Bottom Zone");
+            toggleBottomScreen();
+          }
+          else {
+            if (touch_y > 1300 && touch_x > 1300) {
+                Serial.println("Touch: Top-Right (Sleep/Wake)");
+                alternateScreenState();
+            }
+            else if (touch_y < 850) {
+                Serial.println("Touch: Top-Left (Previous Screen)");
+                currentDisplayDriver->current_cyclic_screen--;
+                if (currentDisplayDriver->current_cyclic_screen < 0) {
+                    currentDisplayDriver->current_cyclic_screen = currentDisplayDriver->num_cyclic_screens - 1;
+                }
+            }
+            else {
+                Serial.println("Touch: Top-Right (Next Screen)");
+                switchToNextScreen();
+            }
+          }
+        }
     }
   }
 }
@@ -64,16 +97,17 @@ extern pool_data pData;
 extern DisplayDriver *currentDisplayDriver;
 
 uint32_t readAdcVoltage(int pin) {
-  esp_adc_cal_characteristics_t adc_chars;
-  esp_adc_cal_value_t val_type = esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_chars);
-  return esp_adc_cal_raw_to_voltage(analogRead(pin), &adc_chars);
-}
+    esp_adc_cal_characteristics_t adc_chars;
+
+    esp_adc_cal_value_t val_type = esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_chars);
+    return esp_adc_cal_raw_to_voltage(analogRead(pin), &adc_chars);
+  }
 
 void printBatteryVoltage() {
-  uint32_t voltage = readAdcVoltage(BAT_ADC_PIN) * 2;
-  Serial.print("Battery voltage: ");
-  Serial.println((float)voltage/1000);
-  delay(500);
+    uint32_t voltage = readAdcVoltage(BAT_ADC_PIN) * 2;
+    Serial.print("Battery voltage: ");
+    Serial.println((float)voltage/1000);
+    delay(500);
 }
 
 void t_hmiDisplay_Init(void)
@@ -102,11 +136,15 @@ void t_hmiDisplay_Init(void)
     return;
   }
 
-#ifdef TOUCH_ENABLE
+  #ifdef TOUCH_ENABLE
   Serial.println(F("Initialize the touch screen"));
   SPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI);
   t_hmi_touch.begin(HEIGHT, WIDTH);
-#endif
+
+  // Attach the hardware interrupt to the TOUCH_IRQ pin
+  pinMode(TOUCH_IRQ, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(TOUCH_IRQ), t_hmi_touch_isr, FALLING);
+  #endif
 
   Serial.println(F("Turn on the LCD backlight"));
   pinMode(LED_PIN, OUTPUT);
@@ -126,8 +164,9 @@ void t_hmiDisplay_AlternateScreenState(void)
 
 void t_hmiDisplay_AlternateRotation(void)
 {
-  tft.getRotation() == 1 ? tft.setRotation(3) : tft.setRotation(1);
+    tft.getRotation() == 1 ? tft.setRotation(3) : tft.setRotation(1);
 }
+
 
 void printPoolData()
 {
@@ -137,6 +176,7 @@ void printPoolData()
 
   background.pushImage(0, 170, 320, 70, bottonPoolScreen);
   render.setLineSpaceRatio(1);
+
   render.setFontSize(24);
   render.drawString(String(pData.workersCount).c_str(), 146, 170+35, TFT_BLACK);
 
@@ -145,6 +185,7 @@ void printPoolData()
   render.drawString(pData.bestDifficulty.c_str(), 5, 170+34, TFT_BLACK);
   // printBatteryVoltage();
 }
+
 
 void printMemPoolFees(unsigned long mElapsed)
 {
@@ -159,6 +200,7 @@ void printMemPoolFees(unsigned long mElapsed)
   {
     // XXX -- remove when bitmap is done
     background.fillRect( 105, 170,  110, 20, TFT_BLACK);
+
     String st = data.btcPrice;
     if (st.length()) st.remove(st.length()-1);
     render.drawString(st.c_str(),  125, 170,  TFT_WHITE);
@@ -180,12 +222,13 @@ void t_hmiDisplay_MinerScreen(unsigned long mElapsed)
   mining_data data = getMiningData(mElapsed);
   background.pushImage(0, 0, MinerWidth, 170, MinerScreen);
   Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
-  data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
-  // Hashrate
+                data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
+   // Hashrate
   render.setFontSize(35);
   render.setCursor(19, 118);
   render.setFontColor(TFT_BLACK);
   render.rdrawString(data.currentHashRate.c_str(), 118, 114, TFT_BLACK);
+
   // Total hashes
   render.setFontSize(18);
   render.rdrawString(data.totalMHashes.c_str(), 268, 138, TFT_BLACK);
@@ -236,7 +279,7 @@ void t_hmiDisplay_ClockScreen(unsigned long mElapsed)
   background.pushImage(0, 0, minerClockWidth, 170 /*minerClockHeight*/, minerClockScreen);
 
   Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
-  data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
+                data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   // Hashrate
   render.setFontSize(25);
@@ -279,7 +322,7 @@ void t_hmiDisplay_GlobalHashScreen(unsigned long mElapsed)
   background.pushImage(0, 0, globalHashWidth, 170 /* globalHashHeight */, globalHashScreen);
 
   Serial.printf(">>> Completed %s share(s), %s Khashes, avg. hashrate %s KH/s\n",
-  data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
+                data.completedShares.c_str(), data.totalKHashes.c_str(), data.currentHashRate.c_str());
 
   // Print BTC Price
   background.setFreeFont(FSSB9);
@@ -289,6 +332,7 @@ void t_hmiDisplay_GlobalHashScreen(unsigned long mElapsed)
   background.drawString(data.btcPrice.c_str(), 198, 3, GFXFF);
 
   // Print Hour
+
   background.setFreeFont(FSSB9);
   background.setTextSize(1);
   background.setTextDatum(TL_DATUM);
@@ -381,6 +425,7 @@ void t_hmiDisplay_BTCprice(unsigned long mElapsed)
   background.pushSprite(0, 0);
 }
 
+
 void t_hmiDisplay_LoadingScreen(void)
 {
   tft.fillScreen(TFT_BLACK);
@@ -400,6 +445,7 @@ void t_hmiDisplay_LoadingScreen(void)
   }
 }
 
+
 void t_hmiDisplay_SetupScreen(void)
 {
   tft.pushImage(0, 0, setupModeWidth, setupModeHeight, setupModeScreen);
@@ -417,16 +463,16 @@ void t_hmiDisplay_DoLedStuff(unsigned long frame)
 CyclicScreenFunction t_hmiDisplayCyclicScreens[] = {t_hmiDisplay_MinerScreen, t_hmiDisplay_ClockScreen, t_hmiDisplay_GlobalHashScreen, t_hmiDisplay_BTCprice};
 
 DisplayDriver t_hmiDisplayDriver = {
-  t_hmiDisplay_Init,
-  t_hmiDisplay_AlternateScreenState,
-  t_hmiDisplay_AlternateRotation,
-  t_hmiDisplay_LoadingScreen,
-  t_hmiDisplay_SetupScreen,
-  t_hmiDisplayCyclicScreens,
-  t_hmiDisplay_AnimateCurrentScreen,
-  t_hmiDisplay_DoLedStuff,
-  SCREENS_ARRAY_SIZE(t_hmiDisplayCyclicScreens),
-  0,
-  WIDTH,
-  HEIGHT};
+    t_hmiDisplay_Init,
+    t_hmiDisplay_AlternateScreenState,
+    t_hmiDisplay_AlternateRotation,
+    t_hmiDisplay_LoadingScreen,
+    t_hmiDisplay_SetupScreen,
+    t_hmiDisplayCyclicScreens,
+    t_hmiDisplay_AnimateCurrentScreen,
+    t_hmiDisplay_DoLedStuff,
+    SCREENS_ARRAY_SIZE(t_hmiDisplayCyclicScreens),
+    0,
+    WIDTH,
+    HEIGHT};
 #endif
