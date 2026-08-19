@@ -31,6 +31,64 @@ static void toggleBottomScreen() {
     lowerScreen = (lowerScreen == LOWER_POOL) ? LOWER_FEES : LOWER_POOL;
 }
 
+namespace {
+constexpr uint16_t T_HMI_TOUCH_DEBOUNCE_MS = 200;
+constexpr uint16_t T_HMI_TOUCH_BOTTOM_MAX_X = 200 + (1700 - 200) / 4;
+constexpr uint16_t T_HMI_TOUCH_PREVIOUS_SCREEN_Y = 850;
+constexpr uint16_t T_HMI_TOUCH_SLEEP_WAKE_X = 1300;
+constexpr uint16_t T_HMI_TOUCH_SLEEP_WAKE_Y = 1300;
+
+enum TouchRegion {
+  TOUCH_REGION_BOTTOM,
+  TOUCH_REGION_TOP_LEFT,
+  TOUCH_REGION_TOP_RIGHT,
+  TOUCH_REGION_SLEEP_WAKE,
+  TOUCH_REGION_UNKNOWN,
+};
+
+static TouchRegion t_hmi_decodeTouchRegion(uint16_t touch_x, uint16_t touch_y) {
+  if (touch_x < T_HMI_TOUCH_BOTTOM_MAX_X) {
+    return TOUCH_REGION_BOTTOM;
+  }
+
+  if (touch_y > T_HMI_TOUCH_SLEEP_WAKE_Y && touch_x > T_HMI_TOUCH_SLEEP_WAKE_X) {
+    return TOUCH_REGION_SLEEP_WAKE;
+  }
+
+  if (touch_y < T_HMI_TOUCH_PREVIOUS_SCREEN_Y) {
+    return TOUCH_REGION_TOP_LEFT;
+  }
+
+  return TOUCH_REGION_TOP_RIGHT;
+}
+
+static void t_hmi_handleTouchRegion(TouchRegion touchRegion) {
+  switch (touchRegion) {
+    case TOUCH_REGION_BOTTOM:
+      Serial.println("Touch: Bottom Zone");
+      toggleBottomScreen();
+      break;
+    case TOUCH_REGION_SLEEP_WAKE:
+      Serial.println("Touch: Sleep/Wake");
+      alternateScreenState();
+      break;
+    case TOUCH_REGION_TOP_LEFT:
+      Serial.println("Touch: Previous Screen");
+      currentDisplayDriver->current_cyclic_screen--;
+      if (currentDisplayDriver->current_cyclic_screen < 0) {
+        currentDisplayDriver->current_cyclic_screen = currentDisplayDriver->num_cyclic_screens - 1;
+      }
+      break;
+    case TOUCH_REGION_TOP_RIGHT:
+      Serial.println("Touch: Next Screen");
+      switchToNextScreen();
+      break;
+    default:
+      break;
+  }
+}
+} // namespace
+
 #ifdef TOUCH_ENABLE
 static XPT2046 t_hmi_touch(SPI, ETOUCH_CS, TOUCH_IRQ);
 static unsigned long lastTouchTime = 0;
@@ -45,45 +103,25 @@ void IRAM_ATTR t_hmi_touch_isr() {
 }
 
 static void t_hmi_pollTouch() {
-  // Only process if the hardware interrupt caught a touch
-  if (t_hmi_touch_detected) {
-    t_hmi_touch_detected = false; // Reset the flag immediately
-
-    // Safety check: is it actually still pressed? (Filters out EMI noise on the IRQ line)
-    if (t_hmi_touch.pressed()) {
-        unsigned long currentTime = millis();
-
-        // Reduced debounce from 2000ms to 200ms for much snappier UI response
-        if (currentTime - lastTouchTime >= 200) {
-          lastTouchTime = currentTime;
-
-          uint16_t touch_x = t_hmi_touch.RawX();
-          uint16_t touch_y = t_hmi_touch.RawY();
-
-          if (touch_x < 200 + (1700 - 200) / 4) {
-            Serial.println("Touch: Bottom Zone");
-            toggleBottomScreen();
-          }
-          else {
-            if (touch_y > 1300 && touch_x > 1300) {
-                Serial.println("Touch: Top-Right (Sleep/Wake)");
-                alternateScreenState();
-            }
-            else if (touch_y < 850) {
-                Serial.println("Touch: Top-Left (Previous Screen)");
-                currentDisplayDriver->current_cyclic_screen--;
-                if (currentDisplayDriver->current_cyclic_screen < 0) {
-                    currentDisplayDriver->current_cyclic_screen = currentDisplayDriver->num_cyclic_screens - 1;
-                }
-            }
-            else {
-                Serial.println("Touch: Top-Right (Next Screen)");
-                switchToNextScreen();
-            }
-          }
-        }
-    }
+  if (!t_hmi_touch_detected) {
+    return;
   }
+
+  t_hmi_touch_detected = false;
+
+  if (!t_hmi_touch.pressed()) {
+    return;
+  }
+
+  unsigned long currentTime = millis();
+  if (currentTime - lastTouchTime < T_HMI_TOUCH_DEBOUNCE_MS) {
+    return;
+  }
+
+  lastTouchTime = currentTime;
+  uint16_t touch_x = t_hmi_touch.RawX();
+  uint16_t touch_y = t_hmi_touch.RawY();
+  t_hmi_handleTouchRegion(t_hmi_decodeTouchRegion(touch_x, touch_y));
 }
 #else
 static void t_hmi_pollTouch() {}
