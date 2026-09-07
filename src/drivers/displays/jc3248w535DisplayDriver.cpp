@@ -596,6 +596,8 @@ static bool jc_readRawTouch(uint16_t &rawX, uint16_t &rawY)
 static uint32_t lastTouchEdgeMs = 0;
 static bool     touchHeld       = false;
 
+void jc3248w535_AlternateScreenState(void);
+
 #ifdef SDMMC_1BIT_FIX
 static void jc_pollSdStatus(); // fwd decl (defined below, alongside SD includes)
 #endif
@@ -629,8 +631,24 @@ static void jc_pollTouch()
         lastTouchEdgeMs = now;
         jc_lastTapX = tx; jc_lastTapY = ty;
         if (ty <= BOT_Y) {
-            Serial.printf("[jc3248w535] TAP TOP (%u,%u) -> next cyclic\n", tx, ty);
-            switchToNextScreen();
+            // Top Right Corner for Sleep/Wake (tx > 400, ty < 60)
+            if (tx > 400 && ty < 60) {
+                Serial.printf("[jc3248w535] TAP TOP-RIGHT CORNER (%u,%u) -> sleep/wake\n", tx, ty);
+                jc3248w535_AlternateScreenState();
+            }
+            // Top Left Side for Previous Screen (tx < 240)
+            else if (tx < 240) {
+                Serial.printf("[jc3248w535] TAP TOP-LEFT (%u,%u) -> prev cyclic\n", tx, ty);
+                currentDisplayDriver->current_cyclic_screen--;
+                if (currentDisplayDriver->current_cyclic_screen < 0) {
+                    currentDisplayDriver->current_cyclic_screen = currentDisplayDriver->num_cyclic_screens - 1;
+                }
+            }
+            // Top Right Side for Next Screen (tx >= 240)
+            else {
+                Serial.printf("[jc3248w535] TAP TOP-RIGHT (%u,%u) -> next cyclic\n", tx, ty);
+                switchToNextScreen();
+            }
         } else if (jc_currentScreen == SCR_SLIDESHOW) {
             // v0.9.8: bottom tap advances image instead of toggling pool/fees.
             Serial.printf("[jc3248w535] TAP BOT (%u,%u) -> next image\n", tx, ty);
